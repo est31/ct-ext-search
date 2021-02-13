@@ -26,8 +26,7 @@ fn list_cert_extensions_der(cert_der :&[u8]) -> Result<Vec<Oid>> {
 				rdr.next().read_der()?;
 				// subjectPublicKeyInfo
 				rdr.next().read_der()?;
-				// issuerUniqueID / subjectUniqueID
-				// TODO
+				// TODO issuerUniqueID / subjectUniqueID
 				// extensions
 				rdr.read_optional(|rdr| {
 					// Extensions has tag number [3]
@@ -40,9 +39,19 @@ fn list_cert_extensions_der(cert_der :&[u8]) -> Result<Vec<Oid>> {
 									yasna::parse_der(&ext, |rdr| {
 										rdr.read_sequence(|rdr| {
 											oids.push(rdr.next().read_oid()?);
+											let r = rdr.next();
+											if r.lookahead_tag()? == yasna::tags::TAG_BOOLEAN {
+												// critical
+												r.read_der()?;
+												// extnValue
+												rdr.next().read_bytes()?;
+											} else {
+												// extnValue
+												r.read_bytes()?;
+											}
 											Ok(())
 										})
-									});
+									})?;
 									Ok(())
 								})? {}
 								Ok(())
