@@ -3,6 +3,7 @@ use yasna::Tag;
 use yasna::models::ObjectIdentifier as Oid;
 use clap::Clap;
 use ctclient::CTClient;
+use serde::Deserialize;
 
 fn list_cert_extensions(cert_pem :&str) -> Result<Vec<Oid>> {
 	let der = pem::parse(cert_pem)?;
@@ -88,6 +89,41 @@ const RCGEN_TEST_CERT :&str = include_str!("rcgen-example.pem");
 	}
 }
 
+#[derive(Deserialize)]
+struct OperatorList {
+	pub operators :Vec<Operator>,
+}
+
+#[derive(Deserialize)]
+struct Operator {
+	pub name :String,
+	pub logs :Vec<Log>,
+}
+
+#[derive(Deserialize)]
+struct Log {
+	pub description :String,
+	pub key :String,
+	pub url :String,
+}
+
+fn obtain_all_operator_list() -> Result<OperatorList> {
+	obtain_operator_list_from_url("https://www.gstatic.com/ct/log_list/v2/all_logs_list.json")
+}
+
+fn obtain_trusted_operator_list() -> Result<OperatorList> {
+	obtain_operator_list_from_url("https://www.gstatic.com/ct/log_list/v2/log_list.json")
+}
+
+fn obtain_operator_list_from_url(url :&str) -> Result<OperatorList> {
+	let client = reqwest::blocking::Client::builder()
+		.user_agent(USER_AGENT)
+		.build()?;
+	let res = client.get(url).send()?;
+	let list = res.json::<OperatorList>()?;
+	Ok(list)
+}
+
 #[derive(Clap)]
 struct Opts {
 	#[clap(subcommand)]
@@ -113,7 +149,9 @@ struct DlOpts {
 }
 
 #[derive(Clap)]
-struct LstrOpts {}
+struct LstrOpts {
+	url :String,
+}
 
 static USER_AGENT :&str = concat!("ct-ext-search ", env!("CARGO_PKG_VERSION"),
 	". https://github.com/est31/ct-ext-search");
@@ -135,10 +173,19 @@ fn main() -> Result<()> {
 			println!("{}", res.text()?);
 		},
 		SubCommand::LiveStream(opts) => {
-			let public_key = base64::decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETeBmZOrzZKo4xYktx9gI2chEce3cw/tbr5xkoQlmhB18aKfsxD+MnILgGNl0FOm0eYGilFVi85wLRIOhK8lxKw==").unwrap();
-			const URL: &str = "https://ct.googleapis.com/logs/argon2021/";
-			// TODO convertability of the error, TODO user agent, TODO library neutral means of access
-			let mut client = CTClient::new_from_latest_th(URL, &public_key).unwrap();
+			let operators = obtain_all_operator_list()?;
+			let log = operators.operators.iter().map(|op| op.logs.iter())
+				.flatten()
+				.find(|log| log.url == opts.url);
+			let log = if let Some(log) = log {
+				log
+			} else {
+				anyhow::bail!("Couldn't find the log in the known log list. Unable to obtain the public key.");
+			};
+			println!("Found log '{}' matching URL", log.description);
+			let public_key = base64::decode(&log.key).unwrap();
+			// TODO convertability of the error, TODO user agent, TODO library neutral means of access (no X509 type)
+			let mut client = CTClient::new_from_latest_th(&log.url, &public_key).unwrap();
 			loop {
 				let update_result = client.update(Some(|certs: &[openssl::x509::X509]| {
 					for c in certs {
