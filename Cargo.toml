@@ -14,3 +14,6 @@ pem = "0.8"
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 clap = "=3.0.0-beta.2"
 serde = "1.0"
+ctclient = "0.4"
+base64 = "0.13"
+openssl = "0.10"
