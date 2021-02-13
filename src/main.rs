@@ -114,8 +114,8 @@ static USER_AGENT :&str = concat!("ct-ext-search ", env!("CARGO_PKG_VERSION"),
 	". https://github.com/est31/ct-ext-search");
 
 fn main() -> Result<()> {
-    let opts :Opts = Opts::parse();
-    match opts.op {
+	let opts :Opts = Opts::parse();
+	match opts.op {
 		SubCommand::Dl(opts) => {
 			println!("Downloading from log at {}", opts.url);
 			let client = reqwest::blocking::Client::builder()
