@@ -63,6 +63,10 @@ fn list_cert_extensions_der(cert_der :&[u8]) -> Result<Vec<Oid>> {
 	Ok(oids)
 }
 
+#[cfg(test)]
+mod tests {
+	use super::*;
+
 const RCGEN_TEST_CERT :&str = "
 -----BEGIN CERTIFICATE-----
 MIIBdjCCARygAwIBAgIBKjAKBggqhkjOPQQDAjAwMRgwFgYDVQQKDA9DcmFiIHdp
@@ -76,8 +80,17 @@ aG9zdDAKBggqhkjOPQQDAgNIADBFAiEAivRIEKj6uyNwv/K9tBXtV38dCgLJyWLh
 -----END CERTIFICATE-----
 ";
 
+	#[test]
+	fn check_rcgen_exts() -> Result<()> {
+		let oids = list_cert_extensions(RCGEN_TEST_CERT)?;
+		assert_eq!(oids, &[Oid::from_slice(&[2, 5, 29, 17])]);
+		Ok(())
+	}
+}
+
+
 fn main() -> Result<()> {
-	let oids = list_cert_extensions(RCGEN_TEST_CERT)?;
-	println!("{:?}", oids);
+	/*let oids = list_cert_extensions()?;
+	println!("{:?}", oids);*/
 	Ok(())
 }
