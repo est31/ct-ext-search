@@ -1,6 +1,7 @@
 use anyhow::Result;
 use yasna::Tag;
 use yasna::models::ObjectIdentifier as Oid;
+use clap::Clap;
 
 fn list_cert_extensions(cert_pem :&str) -> Result<Vec<Oid>> {
 	let der = pem::parse(cert_pem)?;
@@ -97,8 +98,37 @@ aG9zdDAKBggqhkjOPQQDAgNIADBFAiEAivRIEKj6uyNwv/K9tBXtV38dCgLJyWLh
 	}
 }
 
+#[derive(Clap)]
+struct Opts {
+    #[clap(subcommand)]
+    op :SubCommand,
+}
+
+#[derive(Clap)]
+enum SubCommand {
+    Dl(DlOpts),
+}
+
+#[derive(Clap)]
+struct DlOpts {
+    url :String,
+}
+
+static USER_AGENT :&str = concat!("ct-ext-search ", env!("CARGO_PKG_VERSION"),
+	". https://github.com/est31/ct-ext-search");
 
 fn main() -> Result<()> {
+    let opts :Opts = Opts::parse();
+    match opts.op {
+		SubCommand::Dl(opts) => {
+			println!("Downloading from log at {}", opts.url);
+			let client = reqwest::blocking::Client::builder()
+				.user_agent(USER_AGENT)
+				.build()?;
+			let res = client.get(&format!("{}/ct/v1/get-sth", opts.url)).send()?;
+			println!("{}", res.text()?);
+		},
+    }
 	/*let oids = list_cert_extensions()?;
 	println!("{:?}", oids);*/
 	Ok(())
