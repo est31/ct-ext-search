@@ -77,18 +77,7 @@ fn list_cert_extensions_der(cert_der :&[u8]) -> Result<Vec<Oid>> {
 mod tests {
 	use super::*;
 
-const RCGEN_TEST_CERT :&str = "
------BEGIN CERTIFICATE-----
-MIIBdjCCARygAwIBAgIBKjAKBggqhkjOPQQDAjAwMRgwFgYDVQQKDA9DcmFiIHdp
-ZGdpdHMgU0UxFDASBgNVBAMMC01hc3RlciBDZXJ0MCAXDTc1MDEwMTAwMDAwMFoY
-DzQwOTYwMTAxMDAwMDAwWjAwMRgwFgYDVQQKDA9DcmFiIHdpZGdpdHMgU0UxFDAS
-BgNVBAMMC01hc3RlciBDZXJ0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEyhYW
-U6ums18N9XglqoQPnw04zdQrVYgH6p051oQ7Bjh5H6/zaOrv1iUrAzo1lNkmK371
-2h9zzgnwnvbAQCuXLqMlMCMwIQYDVR0RBBowGIILY3JhYnMuY3JhYnOCCWxvY2Fs
-aG9zdDAKBggqhkjOPQQDAgNIADBFAiEAivRIEKj6uyNwv/K9tBXtV38dCgLJyWLh
-7PCCUwwhsZ8CIH1sVLzmqQs5yvZXAARSMfCeDqAaeCWv9AztAnY5gE+M
------END CERTIFICATE-----
-";
+const RCGEN_TEST_CERT :&str = include_str!("rcgen-example.pem");
 
 	#[test]
 	fn check_rcgen_exts() -> Result<()> {
@@ -100,18 +89,25 @@ aG9zdDAKBggqhkjOPQQDAgNIADBFAiEAivRIEKj6uyNwv/K9tBXtV38dCgLJyWLh
 
 #[derive(Clap)]
 struct Opts {
-    #[clap(subcommand)]
-    op :SubCommand,
+	#[clap(subcommand)]
+	op :SubCommand,
 }
 
 #[derive(Clap)]
 enum SubCommand {
-    Dl(DlOpts),
+	ListExt(ListExtOpts),
+	Dl(DlOpts),
 }
 
 #[derive(Clap)]
 struct DlOpts {
-    url :String,
+	url :String,
+}
+
+#[derive(Clap)]
+struct ListExtOpts {
+	//#[clap(short, long)]
+	pem_file :String,
 }
 
 static USER_AGENT :&str = concat!("ct-ext-search ", env!("CARGO_PKG_VERSION"),
@@ -128,8 +124,11 @@ fn main() -> Result<()> {
 			let res = client.get(&format!("{}/ct/v1/get-sth", opts.url)).send()?;
 			println!("{}", res.text()?);
 		},
+		SubCommand::ListExt(opts) => {
+			let pem = std::fs::read_to_string(&opts.pem_file)?;
+			let oids = list_cert_extensions(&pem)?;
+			println!("{:?}", oids);
+		},
     }
-	/*let oids = list_cert_extensions()?;
-	println!("{:?}", oids);*/
 	Ok(())
 }
