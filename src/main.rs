@@ -156,6 +156,20 @@ struct LstrOpts {
 static USER_AGENT :&str = concat!("ct-ext-search ", env!("CARGO_PKG_VERSION"),
 	". https://github.com/est31/ct-ext-search");
 
+// id-ce-extKeyUsage in
+// https://tools.ietf.org/html/rfc5280#section-4.2.1.12
+#[allow(unused)]
+const OID_EXT_KEY_USAGE :&[u64] = &[2, 5, 29, 37];
+
+// id-ce-nameConstraints in
+/// https://tools.ietf.org/html/rfc5280#section-4.2.1.10
+const OID_NAME_CONSTRAINTS :&[u64] = &[2, 5, 29, 30];
+
+static INTERESTING_OIDS :&[&[u64]] = &[
+	//OID_EXT_KEY_USAGE,
+	OID_NAME_CONSTRAINTS,
+];
+
 fn main() -> Result<()> {
 	let opts :Opts = Opts::parse();
 	match opts.op {
@@ -183,15 +197,33 @@ fn main() -> Result<()> {
 				anyhow::bail!("Couldn't find the log in the known log list. Unable to obtain the public key.");
 			};
 			println!("Found log '{}' matching URL", log.description);
+			let mut ctr = 0u64;
 			let public_key = base64::decode(&log.key).unwrap();
 			// TODO convertability of the error, TODO user agent, TODO library neutral means of access (no X509 type)
 			let mut client = CTClient::new_from_latest_th(&log.url, &public_key).unwrap();
 			loop {
 				let update_result = client.update(Some(|certs: &[openssl::x509::X509]| {
+					let mut match_found = false;
 					for c in certs {
+						ctr += 1;
+						if ctr % 1_000 == 0 {
+							println!("Reached {} many certs", ctr);
+						}
 						let der = c.to_der().unwrap();
 						let oids = list_cert_extensions_der(&der).unwrap();
-						println!("{:?}", oids);
+						for oid in oids {
+							for ioid in INTERESTING_OIDS {
+								if ioid == oid.components() {
+									match_found = true;
+								}
+							}
+						}
+					}
+					if match_found {
+						println!("Match found. Chain:");
+						for c in certs {
+							println!("{}", String::from_utf8(c.to_pem().unwrap()).unwrap());
+						}
 					}
 				}));
 				if update_result.is_err() {
