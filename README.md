@@ -1,6 +1,6 @@
 # Certificate Transparency extension search tool
 
-Made to answer [a question](https://github.com/briansmith/webpki/issues/135#issuecomment-759120464) for whether there are publicly trusted certificates that use the NameConstraints extension.
+Made to answer [a question](https://github.com/briansmith/webpki/issues/135#issuecomment-759120464) for whether there are publicly trusted certificates that use the NameConstraints extension. Turns out there are! This tool detects them.
 
 ## Important links
 
