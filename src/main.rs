@@ -5,12 +5,13 @@ use clap::Clap;
 use ctclient::CTClient;
 use serde::Deserialize;
 use std::convert::TryInto;
+use std::io::Read;
+use byteorder::{ReadBytesExt, BigEndian};
 
 fn list_cert_extensions(cert_pem :&str) -> Result<Vec<Oid>> {
 	let der = pem::parse(cert_pem)?;
 	Ok(list_cert_extensions_der(&der.contents)?)
 }
-
 fn list_cert_extensions_der(cert_der :&[u8]) -> Result<Vec<Oid>> {
 	let mut oids = Vec::new();
 	yasna::parse_der(cert_der, |rdr| {
@@ -264,9 +265,9 @@ fn main() -> Result<()> {
 			const STEP_SIZE :u64 = 30;
 			let mut smallest_size = (opts.end - opts.start + 1).min(STEP_SIZE);
 			while start < opts.end {
-				let end = start + smallest_size - 1;
+				let end = opts.end.min(start + smallest_size - 1);
 
-				print!("Requesting {} entries: {}..={}. ", end - start + 1, start, end);
+				print!("Requesting {} entries: {}..={}.", end - start + 1, start, end);
 				let res = client.get(&format!("{}/ct/v1/get-entries?start={}&end={}", opts.url, start, end)).send()?;
 				let entries_res = res.json::<EntriesResult>()?;
 				let entries_len = entries_res.entries.len().try_into().unwrap();
@@ -280,7 +281,55 @@ fn main() -> Result<()> {
 				start += entries_len;
 				smallest_size = STEP_SIZE.min(entries_len);
 
-				// TODO do something with the entries_res
+				for entry in entries_res.entries {
+					let leaf_input_buf = base64::decode(&entry.leaf_input)?;
+					let mut leaf_input_buf_rdr = leaf_input_buf.as_slice();
+					let version = leaf_input_buf_rdr.read_u8()?;
+					if version != 0 {
+						bail!("Invalid version of MerkleTreeLeaf: {}", version);
+					}
+					let leaf_type = leaf_input_buf_rdr.read_u8()?;
+					if leaf_type != 0 {
+						bail!("Invalid type of MerkleTreeLeaf: {}", leaf_type);
+					}
+					let _timestamp = leaf_input_buf_rdr.read_u64::<BigEndian>()?;
+					let entry_type = leaf_input_buf_rdr.read_u16::<BigEndian>()?;
+					fn read_u24(rdr :&mut impl Read) -> Result<u32> {
+						Ok(((rdr.read_u8()? as u32) << 16) + ((rdr.read_u8()? as u32) << 8) + rdr.read_u8()? as u32)
+					}
+					let der = match entry_type {
+						0 /* x509_entry */ => {
+							let leaf_certificate_len = read_u24(&mut leaf_input_buf_rdr)?;
+							println!("Leaf cert len: {}", leaf_certificate_len);
+							let mut der = vec![0; leaf_certificate_len as usize];
+							leaf_input_buf_rdr.read_exact(&mut der)?;
+							der
+						},
+						1 /* precert_entry */ => {
+							let mut issuer_key_hash = [0u8; 32];
+							leaf_input_buf_rdr.read_exact(&mut issuer_key_hash)?;
+							let precert_tbs_len = read_u24(&mut leaf_input_buf_rdr)?;
+							println!("Precert tbs len: {}", precert_tbs_len);
+							let mut der = vec![0; precert_tbs_len as usize];
+							leaf_input_buf_rdr.read_exact(&mut der)?;
+							// We don't know how to parse them yet
+							continue;
+							//der
+						},
+						t => {
+							bail!("Invalid entry type {}", t);
+						},
+					};
+					let oids = list_cert_extensions_der(&der).unwrap();
+					for oid in oids {
+						for ioid in INTERESTING_OIDS {
+							if ioid == oid.components() {
+								println!("Match found. Base64: {}", base64::encode(&der));
+							}
+						}
+					}
+
+				}
 			}
 		},
     }
