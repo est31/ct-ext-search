@@ -315,7 +315,7 @@ fn main() -> Result<()> {
 					let (oids, der) = match entry_type {
 						0 /* x509_entry */ => {
 							let leaf_certificate_len = read_u24(&mut leaf_input_buf_rdr)?;
-							println!("Leaf cert len: {}", leaf_certificate_len);
+							//println!("Leaf cert len: {}", leaf_certificate_len);
 							let mut der = vec![0; leaf_certificate_len as usize];
 							leaf_input_buf_rdr.read_exact(&mut der)?;
 							(list_cert_extensions_der(&der)?, der)
@@ -324,7 +324,7 @@ fn main() -> Result<()> {
 							let mut issuer_key_hash = [0u8; 32];
 							leaf_input_buf_rdr.read_exact(&mut issuer_key_hash)?;
 							let precert_tbs_len = read_u24(&mut leaf_input_buf_rdr)?;
-							println!("Precert tbs len: {}", precert_tbs_len);
+							//println!("Precert tbs len: {}", precert_tbs_len);
 							let mut der = vec![0; precert_tbs_len as usize];
 							leaf_input_buf_rdr.read_exact(&mut der)?;
 							(list_pre_cert_extensions_der(&der)?, der)
