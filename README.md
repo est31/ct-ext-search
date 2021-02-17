@@ -1,5 +1,7 @@
 # Certificate Transparency extension search tool
 
+Made to answer [a question](https://github.com/briansmith/webpki/issues/135#issuecomment-759120464) for whether there are publicly trusted certificates that use the NameConstraints extension.
+
 ## Important links
 
 * [known logs](https://github.com/google/certificate-transparency-community-site/blob/master/docs/google/known-logs.md)
@@ -8,6 +10,8 @@
 
 ```
 cargo run -- live-stream https://ct.googleapis.com/logs/argon2021/ | while IFS= read -r line; do printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"; done
+
+cargo run -- scan https://ct.googleapis.com/logs/argon2021/ 0 20 | while IFS= read -r line; do printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"; done
 ```
 
 ### License
