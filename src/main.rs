@@ -4,6 +4,7 @@ use yasna::models::ObjectIdentifier as Oid;
 use clap::Clap;
 use ctclient::CTClient;
 use serde::Deserialize;
+use std::convert::TryInto;
 
 fn list_cert_extensions(cert_pem :&str) -> Result<Vec<Oid>> {
 	let der = pem::parse(cert_pem)?;
@@ -124,6 +125,17 @@ fn obtain_operator_list_from_url(url :&str) -> Result<OperatorList> {
 	Ok(list)
 }
 
+#[derive(Deserialize)]
+struct EntriesResult {
+	pub entries :Vec<CtEntry>,
+}
+
+#[derive(Deserialize)]
+struct CtEntry {
+	pub leaf_input :String,
+	pub extra_data :String,
+}
+
 #[derive(Clap)]
 struct Opts {
 	#[clap(subcommand)]
@@ -135,6 +147,7 @@ enum SubCommand {
 	ListExt(ListExtOpts),
 	Dl(DlOpts),
 	LiveStream(LstrOpts),
+	Scan(ScanOpts),
 }
 
 #[derive(Clap)]
@@ -151,6 +164,13 @@ struct DlOpts {
 #[derive(Clap)]
 struct LstrOpts {
 	url :String,
+}
+
+#[derive(Clap)]
+struct ScanOpts {
+	url :String,
+	start :u64,
+	end :u64,
 }
 
 static USER_AGENT :&str = concat!("ct-ext-search ", env!("CARGO_PKG_VERSION"),
@@ -230,6 +250,37 @@ fn main() -> Result<()> {
 					eprintln!("Error: {}", update_result.unwrap_err());
 					break;
 				}
+			}
+		},
+		SubCommand::Scan(opts) => {
+			if opts.start > opts.end {
+				bail!("Start is not before end: {} > {}", opts.start, opts.end);
+			}
+			println!("Downloading from log at {}", opts.url);
+			let client = reqwest::blocking::Client::builder()
+				.user_agent(USER_AGENT)
+				.build()?;
+			let mut start = opts.start;
+			const STEP_SIZE :u64 = 30;
+			let mut smallest_size = (opts.end - opts.start + 1).min(STEP_SIZE);
+			while start < opts.end {
+				let end = start + smallest_size - 1;
+
+				print!("Requesting {} entries: {}..={}. ", end - start + 1, start, end);
+				let res = client.get(&format!("{}/ct/v1/get-entries?start={}&end={}", opts.url, start, end)).send()?;
+				let entries_res = res.json::<EntriesResult>()?;
+				let entries_len = entries_res.entries.len().try_into().unwrap();
+				// We use saturating_sub here because the result might return more than we asked for
+				let entries_left = (opts.end - start).saturating_sub(entries_len);
+				println!(" => Got {} entries in result. {} to go.", entries_len, entries_left);
+				if entries_len == 0 {
+					bail!("Last request to obtain entries returned none!\
+						Aborting to prevent infinite number of requests to the API.");
+				}
+				start += entries_len;
+				smallest_size = STEP_SIZE.min(entries_len);
+
+				// TODO do something with the entries_res
 			}
 		},
     }
