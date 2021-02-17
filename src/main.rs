@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use yasna::Tag;
 use yasna::models::ObjectIdentifier as Oid;
 use clap::Clap;
@@ -194,7 +194,7 @@ fn main() -> Result<()> {
 			let log = if let Some(log) = log {
 				log
 			} else {
-				anyhow::bail!("Couldn't find the log in the known log list. Unable to obtain the public key.");
+				bail!("Couldn't find the log in the known log list. Unable to obtain the public key.");
 			};
 			println!("Found log '{}' matching URL", log.description);
 			let mut ctr = 0u64;
