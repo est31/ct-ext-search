@@ -12,61 +12,76 @@ fn list_cert_extensions(cert_pem :&str) -> Result<Vec<Oid>> {
 	let der = pem::parse(cert_pem)?;
 	Ok(list_cert_extensions_der(&der.contents)?)
 }
+
+fn push_cert_extensions(tbs_cert_reader :yasna::BERReader, oids :&mut Vec<Oid>) -> yasna::ASN1Result<()> {
+	tbs_cert_reader.read_sequence(|rdr| {
+		// version
+		rdr.next().read_der()?;
+		// serial number
+		rdr.next().read_der()?;
+		// signature
+		rdr.next().read_der()?;
+		// issuer
+		rdr.next().read_der()?;
+		// validity
+		rdr.next().read_der()?;
+		// subject
+		rdr.next().read_der()?;
+		// subjectPublicKeyInfo
+		rdr.next().read_der()?;
+		// TODO issuerUniqueID / subjectUniqueID
+		// extensions
+		rdr.read_optional(|rdr| {
+			// Extensions has tag number [3]
+			if rdr.lookahead_tag()?.tag_number == 3 {
+				rdr.read_tagged(Tag::context(3), |rdr| {
+					rdr.read_sequence(|rdr| {
+						// Iterate over the extensions
+						while let Some(_) = rdr.read_optional(|rdr| {
+							let ext = rdr.read_der()?;
+							yasna::parse_der(&ext, |rdr| {
+								rdr.read_sequence(|rdr| {
+									oids.push(rdr.next().read_oid()?);
+									let r = rdr.next();
+									if r.lookahead_tag()? == yasna::tags::TAG_BOOLEAN {
+										// critical
+										r.read_der()?;
+										// extnValue
+										rdr.next().read_bytes()?;
+									} else {
+										// extnValue
+										r.read_bytes()?;
+									}
+									Ok(())
+								})
+							})?;
+							Ok(())
+						})? {}
+						Ok(())
+					})
+				})?;
+			}
+			Ok(())
+		})?;
+		Ok(())
+	})?;
+	Ok(())
+}
+
+fn list_pre_cert_extensions_der(cert_der :&[u8]) -> Result<Vec<Oid>> {
+	let mut oids = Vec::new();
+	yasna::parse_der(cert_der, |rdr| {
+		push_cert_extensions(rdr, &mut oids)?;
+		Ok(())
+	})?;
+	Ok(oids)
+}
+
 fn list_cert_extensions_der(cert_der :&[u8]) -> Result<Vec<Oid>> {
 	let mut oids = Vec::new();
 	yasna::parse_der(cert_der, |rdr| {
 		rdr.read_sequence(|rdr| {
-			rdr.next().read_sequence(|rdr| {
-				// version
-				rdr.next().read_der()?;
-				// serial number
-				rdr.next().read_der()?;
-				// signature
-				rdr.next().read_der()?;
-				// issuer
-				rdr.next().read_der()?;
-				// validity
-				rdr.next().read_der()?;
-				// subject
-				rdr.next().read_der()?;
-				// subjectPublicKeyInfo
-				rdr.next().read_der()?;
-				// TODO issuerUniqueID / subjectUniqueID
-				// extensions
-				rdr.read_optional(|rdr| {
-					// Extensions has tag number [3]
-					if rdr.lookahead_tag()?.tag_number == 3 {
-						rdr.read_tagged(Tag::context(3), |rdr| {
-							rdr.read_sequence(|rdr| {
-								// Iterate over the extensions
-								while let Some(_) = rdr.read_optional(|rdr| {
-									let ext = rdr.read_der()?;
-									yasna::parse_der(&ext, |rdr| {
-										rdr.read_sequence(|rdr| {
-											oids.push(rdr.next().read_oid()?);
-											let r = rdr.next();
-											if r.lookahead_tag()? == yasna::tags::TAG_BOOLEAN {
-												// critical
-												r.read_der()?;
-												// extnValue
-												rdr.next().read_bytes()?;
-											} else {
-												// extnValue
-												r.read_bytes()?;
-											}
-											Ok(())
-										})
-									})?;
-									Ok(())
-								})? {}
-								Ok(())
-							})
-						})?;
-					}
-					Ok(())
-				})?;
-				Ok(())
-			})?;
+			push_cert_extensions(rdr.next(), &mut oids)?;
 			// signatureAlgorithm
 			rdr.next().read_der()?;
 			// signature
@@ -297,13 +312,13 @@ fn main() -> Result<()> {
 					fn read_u24(rdr :&mut impl Read) -> Result<u32> {
 						Ok(((rdr.read_u8()? as u32) << 16) + ((rdr.read_u8()? as u32) << 8) + rdr.read_u8()? as u32)
 					}
-					let der = match entry_type {
+					let (oids, der) = match entry_type {
 						0 /* x509_entry */ => {
 							let leaf_certificate_len = read_u24(&mut leaf_input_buf_rdr)?;
 							println!("Leaf cert len: {}", leaf_certificate_len);
 							let mut der = vec![0; leaf_certificate_len as usize];
 							leaf_input_buf_rdr.read_exact(&mut der)?;
-							der
+							(list_cert_extensions_der(&der)?, der)
 						},
 						1 /* precert_entry */ => {
 							let mut issuer_key_hash = [0u8; 32];
@@ -312,15 +327,12 @@ fn main() -> Result<()> {
 							println!("Precert tbs len: {}", precert_tbs_len);
 							let mut der = vec![0; precert_tbs_len as usize];
 							leaf_input_buf_rdr.read_exact(&mut der)?;
-							// We don't know how to parse them yet
-							continue;
-							//der
+							(list_pre_cert_extensions_der(&der)?, der)
 						},
 						t => {
 							bail!("Invalid entry type {}", t);
 						},
 					};
-					let oids = list_cert_extensions_der(&der).unwrap();
 					for oid in oids {
 						for ioid in INTERESTING_OIDS {
 							if ioid == oid.components() {
