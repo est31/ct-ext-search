@@ -7,9 +7,7 @@ use std::io::Read;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use sha2::{Sha256, Digest};
 
-use leveldb::database::Database;
-use leveldb::kv::KV;
-use leveldb::options::{Options, WriteOptions};
+use rocksdb::{DB, Options};
 
 mod cert_ext;
 
@@ -172,13 +170,10 @@ fn main() -> Result<()> {
 			let mut hasher = Sha256::new();
 			hasher.update(public_key);
 			let pubkey_hash = hasher.finalize();
-			let mut options = Options::new();
-			options.create_if_missing = true;
 			let db_path = format!("db/{}.db", hex::encode(pubkey_hash));
-			let database = match Database::open(std::path::Path::new(&db_path), options) {
-				Ok(db) => { db },
-				Err(e) => { panic!("failed to open database: {:?}", e) }
-			};
+			let mut db_opts = Options::default();
+			db_opts.create_if_missing(true);
+			let db = DB::open(&db_opts, db_path)?;
 			dl_range(&opts.url,opts.start, opts.end, |start , entry_result| {
 				for (id, entry) in entry_result.entries.iter().enumerate() {
 					let id = start + id as u64;
@@ -189,7 +184,10 @@ fn main() -> Result<()> {
 					db_value.write_all(&leaf_input_raw).unwrap();
 					db_value.write_u64::<BigEndian>(extra_data_raw.len() as u64).unwrap();
 					db_value.write_all(&extra_data_raw).unwrap();
-					database.put(WriteOptions::new(), id as i32, &db_value)?;
+					let mut key = Vec::with_capacity(9);
+					key.push(1);
+					key.extend_from_slice(&id.to_be_bytes());
+					db.put(&key, &db_value)?;
 				}
 				Ok(())
 			})?;
