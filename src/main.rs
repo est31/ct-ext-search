@@ -67,6 +67,7 @@ struct Opts {
 enum SubCommand {
 	ListExt(ListExtOpts),
 	Dl(DlOpts),
+	Filter(FilterOpts),
 	LiveStream(LstrOpts),
 	Scan(ScanOpts),
 }
@@ -79,6 +80,13 @@ struct ListExtOpts {
 
 #[derive(Clap)]
 struct DlOpts {
+	url :String,
+	start :u64,
+	end :u64,
+}
+
+#[derive(Clap)]
+struct FilterOpts {
 	url :String,
 	start :u64,
 	end :u64,
@@ -197,6 +205,24 @@ fn main() -> Result<()> {
 				.build()?;
 			let res = client.get(&format!("{}/ct/v1/get-sth", opts.url)).send()?;
 			println!("{}", res.text()?);*/
+		},
+		SubCommand::Filter(opts) => {
+			println!("Filtering log with url {}", opts.url);
+			let log = get_matching_log(&opts.url)?;
+			println!("Found log '{}' matching URL", log.description);
+			let public_key = base64::decode(&log.key).unwrap();
+			let mut hasher = Sha256::new();
+			hasher.update(public_key);
+			let pubkey_hash = hasher.finalize();
+			let db_path = format!("db/{}.db", hex::encode(pubkey_hash));
+			let db = DB::open_default(db_path)?;
+			for id in opts.start ..= opts.end {
+				let mut key = Vec::with_capacity(9);
+				key.push(1);
+				key.extend_from_slice(&id.to_be_bytes());
+				let db_value = db.get(&key)?;
+				// TODO
+			}
 		},
 		SubCommand::LiveStream(opts) => {
 			let log = get_matching_log(&opts.url)?;
