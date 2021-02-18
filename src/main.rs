@@ -2,9 +2,13 @@ use anyhow::{Result, bail};
 use clap::Clap;
 use ctclient::CTClient;
 use serde::Deserialize;
-use std::convert::TryInto;
+use std::{convert::TryInto, io::Write};
 use std::io::Read;
-use byteorder::{ReadBytesExt, BigEndian};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+
+use leveldb::database::Database;
+use leveldb::kv::KV;
+use leveldb::options::{Options, WriteOptions};
 
 mod cert_ext;
 
@@ -77,6 +81,8 @@ struct ListExtOpts {
 #[derive(Clap)]
 struct DlOpts {
 	url :String,
+	start :u64,
+	end :u64,
 }
 
 #[derive(Clap)]
@@ -91,7 +97,7 @@ struct ScanOpts {
 	end :u64,
 }
 
-fn dl_range(url :&str, op_start :u64, op_end :u64, mut f :impl FnMut(EntriesResult) -> Result<()>) -> Result<()> {
+fn dl_range(url :&str, op_start :u64, op_end :u64, mut f :impl FnMut(u64, EntriesResult) -> Result<()>) -> Result<()> {
 	let client = reqwest::blocking::Client::builder()
 		.user_agent(USER_AGENT)
 		.build()?;
@@ -108,13 +114,13 @@ fn dl_range(url :&str, op_start :u64, op_end :u64, mut f :impl FnMut(EntriesResu
 		// We use saturating_sub here because the result might return more than we asked for
 		let entries_left = (op_end - start).saturating_sub(entries_len);
 		println!(" => Got {} entries in result. {} to go.", entries_len, entries_left);
+		f(start, entries_res)?;
 		if entries_len == 0 {
 			bail!("Last request to obtain entries returned none!\
 				Aborting to prevent infinite number of requests to the API.");
 		}
 		start += entries_len;
 		smallest_size = STEP_SIZE.min(entries_len);
-		f(entries_res)?;
 	}
 	Ok(())
 }
@@ -159,11 +165,36 @@ fn main() -> Result<()> {
 		},
 		SubCommand::Dl(opts) => {
 			println!("Downloading from log at {}", opts.url);
-			let client = reqwest::blocking::Client::builder()
+			let log = get_matching_log(&opts.url)?;
+			println!("Found log '{}' matching URL", log.description);
+			let public_key = base64::decode(&log.key).unwrap();
+			let mut options = Options::new();
+			options.create_if_missing = true;
+			let db_path = format!("db/{}.db", hex::encode(public_key));
+			let database = match Database::open(std::path::Path::new(&db_path), options) {
+				Ok(db) => { db },
+				Err(e) => { panic!("failed to open database: {:?}", e) }
+			};
+			dl_range(&opts.url,opts.start, opts.end, |start , entry_result| {
+				for (id, entry) in entry_result.entries.iter().enumerate() {
+					let id = start + id as u64;
+					let mut db_value = Vec::new();
+					let leaf_input_raw = base64::decode(&entry.leaf_input)?;
+					let extra_data_raw = base64::decode(&entry.extra_data)?;
+					db_value.write_u64::<BigEndian>(leaf_input_raw.len() as u64).unwrap();
+					db_value.write_all(&leaf_input_raw).unwrap();
+					db_value.write_u64::<BigEndian>(extra_data_raw.len() as u64).unwrap();
+					db_value.write_all(&extra_data_raw).unwrap();
+					database.put(WriteOptions::new(), id as i32, &db_value)?;
+				}
+				Ok(())
+			})?;
+
+			/*let client = reqwest::blocking::Client::builder()
 				.user_agent(USER_AGENT)
 				.build()?;
 			let res = client.get(&format!("{}/ct/v1/get-sth", opts.url)).send()?;
-			println!("{}", res.text()?);
+			println!("{}", res.text()?);*/
 		},
 		SubCommand::LiveStream(opts) => {
 			let log = get_matching_log(&opts.url)?;
@@ -209,7 +240,7 @@ fn main() -> Result<()> {
 			}
 			println!("Downloading from log at {}", opts.url);
 
-			dl_range(&opts.url, opts.start,opts.end, |entries_res| {
+			dl_range(&opts.url, opts.start,opts.end, |_start, entries_res| {
 				for entry in entries_res.entries {
 					let leaf_input_buf = base64::decode(&entry.leaf_input)?;
 					let mut leaf_input_buf_rdr = leaf_input_buf.as_slice();
