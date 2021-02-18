@@ -19,7 +19,7 @@ struct Operator {
 	pub logs :Vec<Log>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct Log {
 	pub description :String,
 	pub key :String,
@@ -119,6 +119,19 @@ fn dl_range(url :&str, op_start :u64, op_end :u64, mut f :impl FnMut(EntriesResu
 	Ok(())
 }
 
+fn get_matching_log(url :&str) -> Result<Log> {
+	let operators = obtain_all_operator_list()?;
+	let log = operators.operators.iter().map(|op| op.logs.iter())
+		.flatten()
+		.find(|log| log.url == url);
+	let log = if let Some(log) = log {
+		log
+	} else {
+		bail!("Couldn't find the log in the known log list. Unable to obtain the public key.");
+	};
+	Ok(log.clone())
+}
+
 static USER_AGENT :&str = concat!("ct-ext-search ", env!("CARGO_PKG_VERSION"),
 	". https://github.com/est31/ct-ext-search");
 
@@ -153,15 +166,7 @@ fn main() -> Result<()> {
 			println!("{}", res.text()?);
 		},
 		SubCommand::LiveStream(opts) => {
-			let operators = obtain_all_operator_list()?;
-			let log = operators.operators.iter().map(|op| op.logs.iter())
-				.flatten()
-				.find(|log| log.url == opts.url);
-			let log = if let Some(log) = log {
-				log
-			} else {
-				bail!("Couldn't find the log in the known log list. Unable to obtain the public key.");
-			};
+			let log = get_matching_log(&opts.url)?;
 			println!("Found log '{}' matching URL", log.description);
 			let mut ctr = 0u64;
 			let public_key = base64::decode(&log.key).unwrap();
