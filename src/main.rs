@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::{convert::TryInto, io::Write};
 use std::io::Read;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use sha2::{Sha256, Digest};
 
 use leveldb::database::Database;
 use leveldb::kv::KV;
@@ -168,9 +169,12 @@ fn main() -> Result<()> {
 			let log = get_matching_log(&opts.url)?;
 			println!("Found log '{}' matching URL", log.description);
 			let public_key = base64::decode(&log.key).unwrap();
+			let mut hasher = Sha256::new();
+			hasher.update(public_key);
+			let pubkey_hash = hasher.finalize();
 			let mut options = Options::new();
 			options.create_if_missing = true;
-			let db_path = format!("db/{}.db", hex::encode(public_key));
+			let db_path = format!("db/{}.db", hex::encode(pubkey_hash));
 			let database = match Database::open(std::path::Path::new(&db_path), options) {
 				Ok(db) => { db },
 				Err(e) => { panic!("failed to open database: {:?}", e) }
