@@ -91,6 +91,34 @@ struct ScanOpts {
 	end :u64,
 }
 
+fn dl_range(url :&str, op_start :u64, op_end :u64, mut f :impl FnMut(EntriesResult) -> Result<()>) -> Result<()> {
+	let client = reqwest::blocking::Client::builder()
+		.user_agent(USER_AGENT)
+		.build()?;
+	let mut start = op_start;
+	const STEP_SIZE :u64 = 30;
+	let mut smallest_size = (op_end - op_start + 1).min(STEP_SIZE);
+	while start < op_end {
+		let end = op_end.min(start + smallest_size - 1);
+
+		print!("Requesting {} entries: {}..={}.", end - start + 1, start, end);
+		let res = client.get(&format!("{}/ct/v1/get-entries?start={}&end={}", url, start, end)).send()?;
+		let entries_res = res.json::<EntriesResult>()?;
+		let entries_len = entries_res.entries.len().try_into().unwrap();
+		// We use saturating_sub here because the result might return more than we asked for
+		let entries_left = (op_end - start).saturating_sub(entries_len);
+		println!(" => Got {} entries in result. {} to go.", entries_len, entries_left);
+		if entries_len == 0 {
+			bail!("Last request to obtain entries returned none!\
+				Aborting to prevent infinite number of requests to the API.");
+		}
+		start += entries_len;
+		smallest_size = STEP_SIZE.min(entries_len);
+		f(entries_res)?;
+	}
+	Ok(())
+}
+
 static USER_AGENT :&str = concat!("ct-ext-search ", env!("CARGO_PKG_VERSION"),
 	". https://github.com/est31/ct-ext-search");
 
@@ -175,29 +203,8 @@ fn main() -> Result<()> {
 				bail!("Start is not before end: {} > {}", opts.start, opts.end);
 			}
 			println!("Downloading from log at {}", opts.url);
-			let client = reqwest::blocking::Client::builder()
-				.user_agent(USER_AGENT)
-				.build()?;
-			let mut start = opts.start;
-			const STEP_SIZE :u64 = 30;
-			let mut smallest_size = (opts.end - opts.start + 1).min(STEP_SIZE);
-			while start < opts.end {
-				let end = opts.end.min(start + smallest_size - 1);
 
-				print!("Requesting {} entries: {}..={}.", end - start + 1, start, end);
-				let res = client.get(&format!("{}/ct/v1/get-entries?start={}&end={}", opts.url, start, end)).send()?;
-				let entries_res = res.json::<EntriesResult>()?;
-				let entries_len = entries_res.entries.len().try_into().unwrap();
-				// We use saturating_sub here because the result might return more than we asked for
-				let entries_left = (opts.end - start).saturating_sub(entries_len);
-				println!(" => Got {} entries in result. {} to go.", entries_len, entries_left);
-				if entries_len == 0 {
-					bail!("Last request to obtain entries returned none!\
-						Aborting to prevent infinite number of requests to the API.");
-				}
-				start += entries_len;
-				smallest_size = STEP_SIZE.min(entries_len);
-
+			dl_range(&opts.url, opts.start,opts.end, |entries_res| {
 				for entry in entries_res.entries {
 					let leaf_input_buf = base64::decode(&entry.leaf_input)?;
 					let mut leaf_input_buf_rdr = leaf_input_buf.as_slice();
@@ -244,7 +251,8 @@ fn main() -> Result<()> {
 					}
 
 				}
-			}
+				Ok(())
+			})?;
 		},
     }
 	Ok(())
