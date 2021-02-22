@@ -172,6 +172,10 @@ enum Entry {
 	PrecertEntry([u8; 32], Vec<u8>),
 }
 
+fn read_u24(rdr :&mut impl Read) -> Result<u32> {
+	Ok(((rdr.read_u8()? as u32) << 16) + ((rdr.read_u8()? as u32) << 8) + rdr.read_u8()? as u32)
+}
+
 fn parse_timestamped_entry(buf :&[u8]) -> Result<TimestampedEntry> {
 	let mut leaf_input_buf_rdr = buf;
 	let version = leaf_input_buf_rdr.read_u8()?;
@@ -184,9 +188,7 @@ fn parse_timestamped_entry(buf :&[u8]) -> Result<TimestampedEntry> {
 	}
 	let timestamp = leaf_input_buf_rdr.read_u64::<BigEndian>()?;
 	let entry_type = leaf_input_buf_rdr.read_u16::<BigEndian>()?;
-	fn read_u24(rdr :&mut impl Read) -> Result<u32> {
-		Ok(((rdr.read_u8()? as u32) << 16) + ((rdr.read_u8()? as u32) << 8) + rdr.read_u8()? as u32)
-	}
+
 	let entry = match entry_type {
 		0 /* x509_entry */ => {
 			let leaf_certificate_len = read_u24(&mut leaf_input_buf_rdr)?;
@@ -212,6 +214,26 @@ fn parse_timestamped_entry(buf :&[u8]) -> Result<TimestampedEntry> {
 		timestamp,
 		signed_entry : entry,
 	})
+}
+
+fn read_certificate_chain(mut rdr :impl Read) -> Result<Vec<Vec<u8>>> {
+	let chain_len = read_u24(&mut rdr)?;
+	let mut res = Vec::with_capacity(chain_len as usize);
+	for _ in 0..chain_len {
+		let cert_len = read_u24(&mut rdr)?;
+		let mut cert_buf = vec![0; cert_len as usize];
+		rdr.read_exact(&mut cert_buf)?;
+		res.push(cert_buf);
+	}
+	Ok(res)
+}
+fn read_precert_chain_entry(buf :&[u8]) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
+	let mut rdr = buf;
+	let cert_len = read_u24(&mut rdr)?;
+	let mut pre_cert_buf = vec![0; cert_len as usize];
+	rdr.read_exact(&mut pre_cert_buf)?;
+	let precertificate_chain = read_certificate_chain(&mut rdr)?;
+	Ok((pre_cert_buf, precertificate_chain))
 }
 
 fn main() -> Result<()> {
@@ -288,21 +310,24 @@ fn main() -> Result<()> {
 				let mut extra_data_raw = vec![0; extra_data_raw_len as usize];
 				val_rdr.read_exact(&mut extra_data_raw)?;
 
-				// TODO also parse extra_data_raw
-
 				let entry = parse_timestamped_entry(&leaf_input_raw)?;
-				let (oids, der) = match &entry.signed_entry {
+				let (oids, der, chain) = match &entry.signed_entry {
 					Entry::X509Entry(der) => {
-						(cert_ext::list_cert_extensions_der(der)?, der)
+						let chain = read_certificate_chain(extra_data_raw.as_slice())?;
+						(cert_ext::list_cert_extensions_der(der)?, der, chain)
 					},
 					Entry::PrecertEntry(_issuer_key_hash, der) => {
-						(cert_ext::list_pre_cert_extensions_der(der)?, der)
+						let chain = read_precert_chain_entry(&extra_data_raw)?;
+						(cert_ext::list_pre_cert_extensions_der(der)?, der, chain.1)
 					},
 				};
 				for oid in oids {
 					for ioid in INTERESTING_OIDS {
 						if ioid == oid.components() {
-							println!("Match found. Base64: {}", base64::encode(&der));
+							let chain :String = chain.iter()
+								.enumerate()
+								.map(|(i, c)| format!("\n  --> Chain entry {}: ", base64::encode(&c))).collect();
+							println!("Match found. Base64: {}. {}", base64::encode(&der), chain);
 						}
 					}
 				}
