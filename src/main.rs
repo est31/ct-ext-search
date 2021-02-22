@@ -236,6 +236,34 @@ fn read_precert_chain_entry(buf :&[u8]) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
 	Ok((pre_cert_buf, precertificate_chain))
 }
 
+struct LogEntry {
+	/// True: precert entry. False: x509 entry
+	is_precert_entry :bool,
+	leaf :Vec<u8>,
+	chain :Vec<Vec<u8>>,
+}
+
+fn read_log_entry(buf :&[u8]) -> Result<LogEntry> {
+	let mut rdr = buf;
+	let entry_type = rdr.read_u16::<BigEndian>()?;
+	let is_precert_entry = match entry_type {
+		0 /* x509_entry */ => false,
+		1 /* precert_entry */ => true,
+		v => bail!("Invalid LogEntryType {}", v),
+	};
+	let cert_len = read_u24(&mut rdr)?;
+	println!("cel {}", cert_len);
+	let mut pre_cert_buf = vec![0; cert_len as usize];
+	rdr.read_exact(&mut pre_cert_buf)?;
+	let precertificate_chain = read_certificate_chain(&mut rdr)?;
+
+	Ok(LogEntry {
+		is_precert_entry,
+		leaf : pre_cert_buf,
+		chain : precertificate_chain,
+	})
+}
+
 fn main() -> Result<()> {
 	let opts :Opts = Opts::parse();
 	match opts.op {
@@ -311,22 +339,21 @@ fn main() -> Result<()> {
 				val_rdr.read_exact(&mut extra_data_raw)?;
 
 				let entry = parse_timestamped_entry(&leaf_input_raw)?;
-				let (oids, der, chain) = match &entry.signed_entry {
+				let (oids, der) = match &entry.signed_entry {
 					Entry::X509Entry(der) => {
-						let chain = read_certificate_chain(extra_data_raw.as_slice())?;
-						(cert_ext::list_cert_extensions_der(der)?, der, chain)
+						(cert_ext::list_cert_extensions_der(der)?, der)
 					},
 					Entry::PrecertEntry(_issuer_key_hash, der) => {
-						let chain = read_precert_chain_entry(&extra_data_raw)?;
-						(cert_ext::list_pre_cert_extensions_der(der)?, der, chain.1)
+						(cert_ext::list_pre_cert_extensions_der(der)?, der)
 					},
 				};
+				let log_entry = read_log_entry(&extra_data_raw)?;
 				for oid in oids {
 					for ioid in INTERESTING_OIDS {
 						if ioid == oid.components() {
-							let chain :String = chain.iter()
+							let chain :String = log_entry.chain.iter()
 								.enumerate()
-								.map(|(i, c)| format!("\n  --> Chain entry {}: ", base64::encode(&c))).collect();
+								.map(|(i, c)| format!("\n  --> Chain entry {}: {} ", i, base64::encode(&c))).collect();
 							println!("Match found. Base64: {}. {}", base64::encode(&der), chain);
 						}
 					}
