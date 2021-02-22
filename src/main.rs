@@ -162,6 +162,58 @@ static INTERESTING_OIDS :&[&[u64]] = &[
 	OID_NAME_CONSTRAINTS,
 ];
 
+struct TimestampedEntry {
+	timestamp :u64,
+	signed_entry :Entry,
+	// TODO extensions
+}
+enum Entry {
+	X509Entry(Vec<u8>),
+	PrecertEntry([u8; 32], Vec<u8>),
+}
+
+fn parse_timestamped_entry(buf :&[u8]) -> Result<TimestampedEntry> {
+	let mut leaf_input_buf_rdr = buf;
+	let version = leaf_input_buf_rdr.read_u8()?;
+	if version != 0 {
+		bail!("Invalid version of MerkleTreeLeaf: {}", version);
+	}
+	let leaf_type = leaf_input_buf_rdr.read_u8()?;
+	if leaf_type != 0 {
+		bail!("Invalid type of MerkleTreeLeaf: {}", leaf_type);
+	}
+	let timestamp = leaf_input_buf_rdr.read_u64::<BigEndian>()?;
+	let entry_type = leaf_input_buf_rdr.read_u16::<BigEndian>()?;
+	fn read_u24(rdr :&mut impl Read) -> Result<u32> {
+		Ok(((rdr.read_u8()? as u32) << 16) + ((rdr.read_u8()? as u32) << 8) + rdr.read_u8()? as u32)
+	}
+	let entry = match entry_type {
+		0 /* x509_entry */ => {
+			let leaf_certificate_len = read_u24(&mut leaf_input_buf_rdr)?;
+			//println!("Leaf cert len: {}", leaf_certificate_len);
+			let mut der = vec![0; leaf_certificate_len as usize];
+			leaf_input_buf_rdr.read_exact(&mut der)?;
+			Entry::X509Entry(der)
+		},
+		1 /* precert_entry */ => {
+			let mut issuer_key_hash = [0u8; 32];
+			leaf_input_buf_rdr.read_exact(&mut issuer_key_hash)?;
+			let precert_tbs_len = read_u24(&mut leaf_input_buf_rdr)?;
+			//println!("Precert tbs len: {}", precert_tbs_len);
+			let mut der = vec![0; precert_tbs_len as usize];
+			leaf_input_buf_rdr.read_exact(&mut der)?;
+			Entry::PrecertEntry(issuer_key_hash, der)
+		},
+		t => {
+			bail!("Invalid entry type {}", t);
+		},
+	};
+	Ok(TimestampedEntry {
+		timestamp,
+		signed_entry : entry,
+	})
+}
+
 fn main() -> Result<()> {
 	let opts :Opts = Opts::parse();
 	match opts.op {
@@ -285,39 +337,13 @@ fn main() -> Result<()> {
 			dl_range(&opts.url, opts.start,opts.end, |_start, entries_res| {
 				for entry in entries_res.entries {
 					let leaf_input_buf = base64::decode(&entry.leaf_input)?;
-					let mut leaf_input_buf_rdr = leaf_input_buf.as_slice();
-					let version = leaf_input_buf_rdr.read_u8()?;
-					if version != 0 {
-						bail!("Invalid version of MerkleTreeLeaf: {}", version);
-					}
-					let leaf_type = leaf_input_buf_rdr.read_u8()?;
-					if leaf_type != 0 {
-						bail!("Invalid type of MerkleTreeLeaf: {}", leaf_type);
-					}
-					let _timestamp = leaf_input_buf_rdr.read_u64::<BigEndian>()?;
-					let entry_type = leaf_input_buf_rdr.read_u16::<BigEndian>()?;
-					fn read_u24(rdr :&mut impl Read) -> Result<u32> {
-						Ok(((rdr.read_u8()? as u32) << 16) + ((rdr.read_u8()? as u32) << 8) + rdr.read_u8()? as u32)
-					}
-					let (oids, der) = match entry_type {
-						0 /* x509_entry */ => {
-							let leaf_certificate_len = read_u24(&mut leaf_input_buf_rdr)?;
-							//println!("Leaf cert len: {}", leaf_certificate_len);
-							let mut der = vec![0; leaf_certificate_len as usize];
-							leaf_input_buf_rdr.read_exact(&mut der)?;
-							(cert_ext::list_cert_extensions_der(&der)?, der)
+					let entry = parse_timestamped_entry(&leaf_input_buf)?;
+					let (oids, der) = match &entry.signed_entry {
+						Entry::X509Entry(der) => {
+							(cert_ext::list_cert_extensions_der(der)?, der)
 						},
-						1 /* precert_entry */ => {
-							let mut issuer_key_hash = [0u8; 32];
-							leaf_input_buf_rdr.read_exact(&mut issuer_key_hash)?;
-							let precert_tbs_len = read_u24(&mut leaf_input_buf_rdr)?;
-							//println!("Precert tbs len: {}", precert_tbs_len);
-							let mut der = vec![0; precert_tbs_len as usize];
-							leaf_input_buf_rdr.read_exact(&mut der)?;
-							(cert_ext::list_pre_cert_extensions_der(&der)?, der)
-						},
-						t => {
-							bail!("Invalid entry type {}", t);
+						Entry::PrecertEntry(_issuer_key_hash, der) => {
+							(cert_ext::list_pre_cert_extensions_der(der)?, der)
 						},
 					};
 					for oid in oids {
