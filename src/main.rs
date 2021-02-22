@@ -221,6 +221,20 @@ fn main() -> Result<()> {
 				key.push(1);
 				key.extend_from_slice(&id.to_be_bytes());
 				let db_value = db.get(&key)?;
+				let db_value = if let Some(v) = db_value {
+					v
+				} else {
+					// Maybe error here? IDK.
+					println!("Can't find entry for id {} in db. Maybe download first?", id);
+					break;
+				};
+				let mut val_rdr = db_value.as_slice();
+				let leaf_input_raw_len = val_rdr.read_u64::<BigEndian>()?;
+				let mut leaf_input_raw = vec![0; leaf_input_raw_len as usize];
+				val_rdr.read_exact(&mut leaf_input_raw)?;
+				let extra_data_raw_len = val_rdr.read_u64::<BigEndian>()?;
+				let mut extra_data_raw = vec![0; extra_data_raw_len as usize];
+				val_rdr.read_exact(&mut extra_data_raw)?;
 				// TODO
 			}
 		},
