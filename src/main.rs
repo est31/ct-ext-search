@@ -287,7 +287,25 @@ fn main() -> Result<()> {
 				let extra_data_raw_len = val_rdr.read_u64::<BigEndian>()?;
 				let mut extra_data_raw = vec![0; extra_data_raw_len as usize];
 				val_rdr.read_exact(&mut extra_data_raw)?;
-				// TODO
+
+				// TODO also parse extra_data_raw
+
+				let entry = parse_timestamped_entry(&leaf_input_raw)?;
+				let (oids, der) = match &entry.signed_entry {
+					Entry::X509Entry(der) => {
+						(cert_ext::list_cert_extensions_der(der)?, der)
+					},
+					Entry::PrecertEntry(_issuer_key_hash, der) => {
+						(cert_ext::list_pre_cert_extensions_der(der)?, der)
+					},
+				};
+				for oid in oids {
+					for ioid in INTERESTING_OIDS {
+						if ioid == oid.components() {
+							println!("Match found. Base64: {}", base64::encode(&der));
+						}
+					}
+				}
 			}
 		},
 		SubCommand::LiveStream(opts) => {
@@ -353,7 +371,6 @@ fn main() -> Result<()> {
 							}
 						}
 					}
-
 				}
 				Ok(())
 			})?;
