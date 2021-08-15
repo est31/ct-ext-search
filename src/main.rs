@@ -257,9 +257,10 @@ fn read_log_entry(buf :&[u8]) -> Result<LogEntry> {
 		0 /* x509_entry */ => LogEntryType::X509Entry,
 		1 /* precert_entry */ => LogEntryType::PrecertEntry,
 		// CT 1.0 only supports two log entry types.
-		// CT 2.0 adds a few additional ones.
+		// CT 2.0 adds a few additional ones. We don't
+		// have full support for CT 2.0, but not bailing
+		// lets us read what we understand at least.
 		v => LogEntryType::Other(v),
-		//v => bail!("Invalid LogEntryType {}", v),
 	};
 	let cert_len = read_u24(&mut rdr)?;
 	println!("cel {}", cert_len);
