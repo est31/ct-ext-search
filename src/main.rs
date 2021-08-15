@@ -236,9 +236,16 @@ fn read_precert_chain_entry(buf :&[u8]) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
 	Ok((pre_cert_buf, precertificate_chain))
 }
 
+/// LogEntryType in CT 1.0, VersionedTransType in CT 2.0
+#[derive(Debug, PartialEq, Eq)]
+enum LogEntryType {
+	X509Entry,
+	PrecertEntry,
+	Other(u16),
+}
+
 struct LogEntry {
-	/// True: precert entry. False: x509 entry
-	is_precert_entry :bool,
+	entry_type :LogEntryType,
 	leaf :Vec<u8>,
 	chain :Vec<Vec<u8>>,
 }
@@ -246,10 +253,13 @@ struct LogEntry {
 fn read_log_entry(buf :&[u8]) -> Result<LogEntry> {
 	let mut rdr = buf;
 	let entry_type = rdr.read_u16::<BigEndian>()?;
-	let is_precert_entry = match entry_type {
-		0 /* x509_entry */ => false,
-		1 /* precert_entry */ => true,
-		v => bail!("Invalid LogEntryType {}", v),
+	let entry_type = match entry_type {
+		0 /* x509_entry */ => LogEntryType::X509Entry,
+		1 /* precert_entry */ => LogEntryType::PrecertEntry,
+		// CT 1.0 only supports two log entry types.
+		// CT 2.0 adds a few additional ones.
+		v => LogEntryType::Other(v),
+		//v => bail!("Invalid LogEntryType {}", v),
 	};
 	let cert_len = read_u24(&mut rdr)?;
 	println!("cel {}", cert_len);
@@ -258,7 +268,7 @@ fn read_log_entry(buf :&[u8]) -> Result<LogEntry> {
 	let precertificate_chain = read_certificate_chain(&mut rdr)?;
 
 	Ok(LogEntry {
-		is_precert_entry,
+		entry_type,
 		leaf : pre_cert_buf,
 		chain : precertificate_chain,
 	})
